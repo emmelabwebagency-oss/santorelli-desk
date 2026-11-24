@@ -1,0 +1,42 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { BarChart3, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { supabase } from '@/integrations/supabase/client';
+import { downloadCsv } from '@/lib/desk';
+
+type Totals={received:number;contacts:number;handled:number;appointments:number;historical:number;median_hours:number|null};
+type Group={source:string;campaign_key:string;campaign_label:string;adset_key:string;adset_label:string;ad_key:string;ad_label:string;received:number;contacts:number;handled:number;appointments:number;historical:number};
+type Report={current:Totals;previous:Totals;groups:Group[];total_groups:number;month:string;include_history:boolean};
+async function getReport(month:string,offset:number,limit:number,history:boolean):Promise<Report>{
+  const {data,error}=await supabase.rpc('desk_campaign_report',{p_month:month,p_offset:offset,p_limit:limit,p_include_history:history});
+  if(error)throw new Error(error.message);return data as Report;
+}
+const percent=(appointments:number,received:number)=>received?`${(100*appointments/received).toFixed(1)}%`:'—';
+export default function CampaignAnalytics(){
+  const [month,setMonth]=useState(new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Rome',year:'numeric',month:'2-digit'}).format(new Date()));
+  const [history,setHistory]=useState(true);const [offset,setOffset]=useState(0);const [exporting,setExporting]=useState(false);
+  const query=useQuery({queryKey:['campaign-report',month,history,offset],queryFn:()=>getReport(month,offset,100,history),enabled:/^\d{4}-(0[1-9]|1[0-2])$/.test(month)});
+  async function exportAll(){
+    setExporting(true);
+    try{
+      const first=await getReport(month,0,500,history);const groups=[...first.groups];
+      for(let cursor=500;cursor<first.total_groups;cursor+=500){const next=await getReport(month,cursor,500,history);if(next.total_groups!==first.total_groups)throw new Error('Il report è cambiato durante l’esportazione. Riprova quando gli import sono conclusi.');groups.push(...next.groups);}
+      downloadCsv([['Mese','Fonte','ID campagna','Campagna','ID gruppo','Gruppo','ID inserzione','Inserzione','Richieste','ID contatti unici nel gruppo','Gestite','Appuntamento (stato corrente)','Conversione','Storiche'],...groups.map(g=>[month,g.source,g.campaign_key,g.campaign_label,g.adset_key,g.adset_label,g.ad_key,g.ad_label,String(g.received),String(g.contacts),String(g.handled),String(g.appointments),percent(g.appointments,g.received),String(g.historical)])],`campagne-${month}.csv`);
+      toast.success(`${groups.length} gruppi esportati, senza recapiti personali`);
+    }catch(e){toast.error((e as Error).message);}finally{setExporting(false);}
+  }
+  const data=query.data;
+  const metrics=data?[
+    ['Richieste',data.current.received,data.previous.received],['ID contatti unici',data.current.contacts,data.previous.contacts],['Prime gestioni',data.current.handled,data.previous.handled],['Appuntamenti correnti',data.current.appointments,data.previous.appointments],
+  ] as const:[];
+  return <div className="space-y-6"><div className="desk-panel flex flex-wrap items-end justify-between gap-4 p-5"><div className="flex flex-wrap items-end gap-4"><label className="field">Mese della ricezione<Input aria-label="Mese del report" type="month" value={month} onChange={e=>{setMonth(e.target.value);setOffset(0);}}/></label><label className="flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={history} onChange={e=>{setHistory(e.target.checked);setOffset(0);}}/>Includi import storico</label></div><Button variant="outline" className="rounded-xl bg-white" disabled={exporting||!data||query.isFetching} onClick={()=>void exportAll()}><Download size={16}/>{exporting?'Esportazione…':'Esporta tutte le campagne'}</Button></div>
+  {!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)?<div className="desk-panel p-8 text-sm text-slate-500">Seleziona un mese valido.</div>:query.isPending?<div className="desk-panel p-8 text-sm text-slate-500">Calcolo del report sul database completo…</div>:query.isError?<div role="alert" className="desk-panel p-6 text-sm text-red-700">Report non disponibile. <button className="underline" onClick={()=>void query.refetch()}>Riprova</button></div>:data&&<>
+  <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{metrics.map(([label,current,previous])=><div className="desk-panel p-5" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-4 text-3xl font-semibold text-slate-800">{current}</p><p className="mt-3 text-xs text-slate-500">Mese precedente: {previous} <span className="font-medium text-blue-700">({current-previous>=0?'+':''}{current-previous})</span></p></div>)}</div>
+  <div className="grid gap-4 sm:grid-cols-3"><div className="desk-panel p-5"><p className="text-xs text-slate-500">Conversione del mese</p><p className="mt-3 text-2xl font-semibold text-blue-700">{percent(data.current.appointments,data.current.received)}</p><p className="mt-2 text-xs text-slate-500">Precedente: {percent(data.previous.appointments,data.previous.received)}</p></div><div className="desk-panel p-5"><p className="text-xs text-slate-500">Mediana ore alla prima gestione</p><p className="mt-3 text-2xl font-semibold">{data.current.median_hours===null?'—':data.current.median_hours.toFixed(1)}</p><p className="mt-2 text-xs text-slate-500">Solo richieste con una prima gestione registrata</p></div><div className="desk-panel p-5"><p className="text-xs text-slate-500">Richieste storiche incluse</p><p className="mt-3 text-2xl font-semibold">{data.current.historical}</p><p className="mt-2 text-xs text-slate-500">Distinte dalle nuove ricezioni live</p></div></div>
+  <section className="desk-panel"><div className="panel-heading"><div><h3>Campagne, gruppi e inserzioni</h3><p>Fonte originale · attribuzione disponibile · nessun dato stimato</p></div><BarChart3 size={22} className="text-blue-600"/></div>{!data.groups.length?<div className="p-10 text-center text-sm text-slate-500">Nessuna richiesta nel periodo selezionato.</div>:<div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-blue-50 text-slate-600"><tr>{['Fonte / campagna','Gruppo / inserzione','Richieste','Gestite','Appuntamenti','Conversione'].map(h=><th key={h} className="p-4">{h}</th>)}</tr></thead><tbody>{data.groups.map((g,i)=><tr key={i} className="border-t"><td className="min-w-52 p-4"><p className="font-semibold text-slate-700">{g.campaign_label}</p><p className="mt-1 text-slate-500">{g.source}{g.campaign_key?` · ${g.campaign_key}`:''}</p></td><td className="p-4"><p>{g.adset_label||g.adset_key||'Non attribuito'}</p><p className="mt-1 text-slate-500">{g.ad_label||g.ad_key||'Inserzione non attribuita'}</p></td><td className="p-4 font-semibold">{g.received}</td><td className="p-4">{g.handled}</td><td className="p-4">{g.appointments}</td><td className="p-4 text-blue-700">{percent(g.appointments,g.received)}</td></tr>)}</tbody></table></div>}<div className="flex flex-wrap items-center justify-between gap-3 border-t p-4 text-xs text-slate-500"><span>{data.total_groups?`${offset+1}–${Math.min(offset+100,data.total_groups)} di ${data.total_groups}`:'0 gruppi'} · conteggi server, non limitati alle richieste caricate nella lista</span><div className="flex gap-2"><Button variant="outline" size="sm" className="rounded-lg" aria-label="Pagina precedente" disabled={!offset||query.isFetching} onClick={()=>setOffset(Math.max(0,offset-100))}><ChevronLeft size={16}/></Button><Button variant="outline" size="sm" className="rounded-lg" aria-label="Pagina successiva" disabled={offset+100>=data.total_groups||query.isFetching} onClick={()=>setOffset(offset+100)}><ChevronRight size={16}/></Button></div></div></section>
+  <p className="text-xs leading-6 text-slate-500">Confronto tra coorti ricevute nel mese e nel mese precedente, secondo Europe/Rome, non tra attività avvenute nei due mesi. Gestita = prima azione umana realmente registrata. Conversione = stato attuale «APPUNTAMENTO FISSATO» / richieste della coorte; non è uno storico delle prenotazioni. I contatti unici per gruppo non sono sommabili tra gruppi. Spesa pubblicitaria, ROI e attribuzioni mancanti non vengono inventati.</p></>}
+  </div>;
+}

@@ -1,0 +1,62 @@
+-- Fixture sintetiche con rollback. Non invia email o richieste ai provider.
+DO $test$
+DECLARE
+  t uuid:=gen_random_uuid(); a uuid:=gen_random_uuid(); s uuid:=gen_random_uuid(); g uuid:=gen_random_uuid();
+  rows jsonb; r jsonb; i uuid; live uuid; c uuid; future_task uuid; due_task uuid; sid uuid; rejected boolean;
+  received timestamptz:=greatest(date_trunc('month',now() AT TIME ZONE 'Europe/Rome') AT TIME ZONE 'Europe/Rome',now()-interval '2 hours');
+  month text:=to_char(now() AT TIME ZONE 'Europe/Rome','YYYY-MM');
+BEGIN
+  BEGIN
+    INSERT INTO public.desk_tenants(id,name,alert_email) VALUES(t,'Fixture moduli avanzati','fixture@example.invalid');
+    INSERT INTO auth.users(id,email) VALUES(a,'fixture-'||a||'@example.invalid'),(s,'fixture-'||s||'@example.invalid'),(g,'fixture-'||g||'@example.invalid');
+    INSERT INTO public.desk_members(id,tenant_id,full_name,role) VALUES(a,t,'Admin sintetico','admin'),(s,t,'Tecnico sintetico','super_admin'),(g,t,'Segretaria sintetica','segretaria');
+    rows:=jsonb_build_array(jsonb_build_object('id','old-1','name','Contatto sintetico','email','fixture@example.invalid','received_at',to_char(received AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'source','Facebook Lead Ads','status','NUOVA','campaign_id','campagna-fixture'));
+    PERFORM set_config('request.jwt.claim.sub',g::text,true);
+    rejected:=false;
+    BEGIN PERFORM public.desk_import_history('fixture',rows); EXCEPTION WHEN OTHERS THEN rejected:=true; END;
+    IF NOT rejected THEN RAISE EXCEPTION 'Segretaria può importare'; END IF;
+    PERFORM set_config('request.jwt.claim.sub',a::text,true);
+    r:=public.desk_import_history('fixture',rows);
+    IF (r->>'imported')::integer<>1 THEN RAISE EXCEPTION 'Import fallito'; END IF;
+    r:=public.desk_import_history('fixture',rows);
+    IF (r->>'skipped')::integer<>1 THEN RAISE EXCEPTION 'Dedup import fallita'; END IF;
+    SELECT id INTO i FROM public.desk_inquiries WHERE tenant_id=t AND external_reference='csv:fixture:old-1';
+    PERFORM public.desk_category_set(i,'Appuntamenti');
+    IF (SELECT first_handled_at IS NOT NULL FROM public.desk_inquiries WHERE id=i) THEN RAISE EXCEPTION 'Categoria conta come gestione'; END IF;
+    r:=public.desk_campaign_report(month,0,100,true);
+    IF (r->'current'->>'received')::integer<>1 OR (r->'current'->>'historical')::integer<>1 OR jsonb_array_length(r->'groups')<>1 OR (r->'previous'->>'received')::integer<>0 THEN RAISE EXCEPTION 'Report storico inesatto'; END IF;
+    r:=public.desk_campaign_report(month,0,100,false);
+    IF (r->'current'->>'received')::integer<>0 THEN RAISE EXCEPTION 'Filtro storico fallito'; END IF;
+    PERFORM public.desk_automation_save('{"before_minutes":90,"callback_email":false,"callback_subject":"Richiamo sintetico","callback_body":"Verificare lo spazio: {app_url}","escalation_subject":"Escalation sintetica","escalation_body":"Verificare lo spazio: {app_url}"}'::jsonb);
+    rejected:=false;
+    BEGIN PERFORM public.desk_automation_save('{"before_minutes":90,"callback_email":true,"callback_subject":"Richiamo sintetico","callback_body":"Nome: {patient_name}","escalation_subject":"Escalation sintetica","escalation_body":"Verificare lo spazio: {app_url}"}'::jsonb); EXCEPTION WHEN OTHERS THEN rejected:=true; END;
+    IF NOT rejected THEN RAISE EXCEPTION 'Segnaposto dati personali accettato'; END IF;
+    SELECT contact_id INTO c FROM public.desk_inquiries WHERE id=i;
+    INSERT INTO public.desk_inquiries(tenant_id,contact_id,source,subject,created_at,assigned_to) VALUES(t,c,'Telefono','Richiesta sintetica',now()-interval '49 hours',g) RETURNING id INTO live;
+    INSERT INTO public.desk_tasks(tenant_id,inquiry_id,assigned_to,kind,due_at) VALUES(t,live,g,'Richiamo',now()+interval '60 minutes') RETURNING id INTO future_task;
+    INSERT INTO public.desk_tasks(tenant_id,inquiry_id,assigned_to,kind,due_at) VALUES(t,live,g,'Richiamo',now()-interval '1 minute') RETURNING id INTO due_task;
+    PERFORM public.desk_run_reminders();
+    IF (SELECT count(*) FROM public.desk_escalations WHERE tenant_id=t)<>1 OR EXISTS(SELECT 1 FROM public.desk_escalations WHERE inquiry_id=i) THEN RAISE EXCEPTION 'Escalation storico errata'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.desk_notifications WHERE dedup_key='before:'||future_task) OR EXISTS(SELECT 1 FROM public.desk_email_outbox WHERE dedup_key='task:'||due_task) THEN RAISE EXCEPTION 'Regole configurabili non applicate'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.desk_email_outbox WHERE tenant_id=t AND subject='Escalation sintetica' AND body_text='Verificare lo spazio: {app_url}') THEN RAISE EXCEPTION 'Snapshot testo non applicato'; END IF;
+    sid:=public.desk_support_grant(i,s,'TICKET-SINTETICO',15);
+    PERFORM set_config('request.jwt.claim.sub',s::text,true);
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    IF EXISTS(SELECT 1 FROM public.desk_contacts WHERE tenant_id=t) OR EXISTS(SELECT 1 FROM public.desk_inquiries WHERE tenant_id=t) THEN RAISE EXCEPTION 'Supporto apre lettura tabelle paziente'; END IF;
+    r:=public.desk_support_view(sid);
+    IF r ?| ARRAY['name','phone','email','subject','note'] OR r->>'inquiry_id'<>i::text THEN RAISE EXCEPTION 'Diagnostica troppo ampia'; END IF;
+    rejected:=false;
+    BEGIN PERFORM public.desk_campaign_report(month); EXCEPTION WHEN OTHERS THEN rejected:=true; END;
+    IF NOT rejected THEN RAISE EXCEPTION 'Super Admin legge analisi pazienti'; END IF;
+    PERFORM set_config('request.jwt.claim.sub',a::text,true);
+    PERFORM public.desk_support_revoke(sid);
+    PERFORM set_config('request.jwt.claim.sub',s::text,true);
+    rejected:=false;
+    BEGIN PERFORM public.desk_support_view(sid); EXCEPTION WHEN OTHERS THEN rejected:=true; END;
+    IF NOT rejected THEN RAISE EXCEPTION 'Revoca non immediata'; END IF;
+    EXECUTE 'RESET ROLE';
+    IF (SELECT count(*) FROM public.desk_technical_audit WHERE tenant_id=t AND event LIKE 'Consultazione diagnostica%')<>1 THEN RAISE EXCEPTION 'Audit lettura mancante'; END IF;
+    RAISE EXCEPTION USING ERRCODE='ZX001',MESSAGE='Test superati; rollback fixture';
+  EXCEPTION WHEN SQLSTATE 'ZX001' THEN NULL;
+  END;
+END $test$;

@@ -13,7 +13,7 @@ export function useDesk() {
         operational ? supabase.from('desk_inquiries').select('*,desk_contacts(*)').order('created_at', { ascending: false }) : Promise.resolve({ data: [], error: null }),
         operational ? supabase.from('desk_tasks').select('*').order('due_at') : Promise.resolve({ data: [], error: null }),
         operational ? supabase.from('desk_activity').select('*').order('created_at', { ascending: false }).limit(100) : Promise.resolve({ data: [], error: null }),
-        supabase.from('desk_members').select('*').eq('active', true),
+        supabase.from('desk_members').select('*'),
         supabase.from('desk_sites').select('*').order('name'),
         supabase.from('desk_notifications').select('*').order('created_at', { ascending: false }).limit(50),
       ]);

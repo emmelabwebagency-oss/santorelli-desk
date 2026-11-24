@@ -1,0 +1,29 @@
+SANTORELLI DESK — CONNETTORE ELEMENTOR 1.0.0
+EmmeLab
+
+REQUISITI
+WordPress >= 6.2, PHP >= 7.4 con OpenSSL, Elementor Pro attivo, HTTPS e accesso HTTPS in uscita al progetto Supabase.
+
+INSTALLAZIONE
+1. Nel CRM, Super Admin → Centro sincronizzazione → WordPress: predisporre il sito con la sua origine esatta HTTPS (attenzione a www).
+2. Scaricare il pacchetto ZIP dal CRM. WordPress → Plugin → Aggiungi plugin → Carica plugin → selezionare lo ZIP → Attiva.
+3. WordPress → Impostazioni → Santorelli Desk: inserire ID connessione e chiave di firma mostrata una sola volta dal CRM.
+4. Mappare ogni modulo mediante il suo Nome modulo univoco e gli ID dei campi amministrativi. Il cognome è facoltativo; nome e almeno un recapito sono necessari.
+5. Salvare e premere Verifica collegamento. Questa prova verifica la firma, non importa un paziente.
+6. Inviare da ogni modulo un contatto sintetico. Verificare coda WordPress e arrivo nelle Nuove richieste del CRM. Non usare dati paziente per il collaudo.
+
+ATTRIBUZIONE
+La fonte originale resta Sito web. Gli UTM disponibili sono conservati senza inventare attribuzioni. Per valorizzarli usare campi nascosti Elementor con ID utm_source, utm_medium, utm_campaign, utm_content, utm_term. referrer e landing_page sono facoltativi. Solo dati amministrativi: note cliniche o campi liberi aggiuntivi non vengono importati.
+
+CODA E SICUREZZA
+Gli eventi sono salvati prima dell’invio, cifrati AES-256-GCM nel database WordPress. La firma usa HMAC-SHA256 e timestamp. Una ritrasmissione mantiene lo stesso ID evento. La chiave è cifrata e mai ristampata nel pannello. Consegnare la chiave solo all’amministratore WordPress autorizzato e non inserirla in chat.
+I moduli non attendono la risposta del CRM. WP-Cron esegue i retry; per l’esecuzione anche senza visite configurare il cron periodico presso l’hosting. La coda Supabase viene elaborata ogni minuto indipendentemente dai browser.
+Gli eventi consegnati vengono svuotati dei recapiti e i relativi log eliminati dopo 30 giorni. Gli eventi falliti rimangono cifrati per permettere il recupero: è responsabilità dello studio risolverli o applicare una retention autorizzata.
+Conservare backup delle chiavi di sicurezza WordPress. Cambiarle rende non decifrabili coda e chiave salvata: ripristinare correttamente prima di riprendere gli invii.
+Non disinstallare il plugin o cancellare tabelle prima di aver svuotato la coda. La disattivazione sospende il cron senza cancellare gli eventi.
+
+COLLAUDO OBBLIGATORIO
+Il pacchetto non è stato installato sul sito del cliente da questa consegna. Verificare su staging Elementor: mapping, invio, evento duplicato, CRM temporaneamente non disponibile, retry, firma errata e ripristino dopo interruzione. Controllare che gli altri canali del modulo (email o raccolta invii WordPress) rimangano attivi.
+
+LICENZA
+GPL-2.0-or-later.

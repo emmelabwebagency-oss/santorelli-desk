@@ -1,0 +1,141 @@
+<?php
+/**
+ * Plugin Name: Santorelli Desk — Elementor
+ * Description: Collegamento amministrativo sicuro tra Elementor Pro e Santorelli Desk, con coda persistente e firma dei webhook.
+ * Version: 1.0.0
+ * Requires at least: 6.2
+ * Requires PHP: 7.4
+ * Author: EmmeLab
+ * License: GPL-2.0-or-later
+ */
+if (!defined('ABSPATH')) { exit; }
+final class Santorelli_Desk_Connector {
+    const ENDPOINT = 'https://smbiewvuspweetdjbnwe.supabase.co/functions/v1/desk-wordpress';
+    const OPTION = 'santorelli_desk_settings';
+    static function table() { global $wpdb; return $wpdb->prefix . 'santorelli_desk_queue'; }
+    static function seal($value) {
+        if (!function_exists('openssl_encrypt')) { return ''; }
+        $iv = random_bytes(12); $tag = '';
+        $cipher = openssl_encrypt($value, 'aes-256-gcm', hash('sha256', wp_salt('auth'), true), OPENSSL_RAW_DATA, $iv, $tag);
+        return $cipher === false ? '' : base64_encode($iv . $tag . $cipher);
+    }
+    static function open($value) {
+        $bytes = base64_decode($value, true);
+        if ($bytes === false || strlen($bytes) < 28 || !function_exists('openssl_decrypt')) { return ''; }
+        $plain = openssl_decrypt(substr($bytes, 28), 'aes-256-gcm', hash('sha256', wp_salt('auth'), true), OPENSSL_RAW_DATA, substr($bytes, 0, 12), substr($bytes, 12, 16));
+        return $plain === false ? '' : $plain;
+    }
+    static function activate() {
+        if (!function_exists('openssl_encrypt') || !in_array('aes-256-gcm', openssl_get_cipher_methods(), true)) { wp_die('OpenSSL con AES-256-GCM è necessario per attivare il connettore.'); }
+        global $wpdb; require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta('CREATE TABLE ' . self::table() . " (id bigint unsigned NOT NULL AUTO_INCREMENT, event_id varchar(36) NOT NULL, payload longtext NOT NULL, status varchar(20) NOT NULL DEFAULT 'pending', attempts int unsigned NOT NULL DEFAULT 0, available_at datetime NOT NULL, locked_at datetime NULL, last_error varchar(180) NOT NULL DEFAULT '', created_at datetime NOT NULL, delivered_at datetime NULL, PRIMARY KEY (id), UNIQUE KEY event_id (event_id), KEY pending (status,available_at)) " . $wpdb->get_charset_collate() . ';');
+        $created = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like(self::table())));
+        if ($created !== self::table()) { wp_die('Impossibile predisporre la coda persistente. Verificare i permessi del database WordPress.'); }
+        if (!wp_next_scheduled('santorelli_desk_tick')) { wp_schedule_event(time() + 60, 'santorelli_desk_minute', 'santorelli_desk_tick'); }
+    }
+    static function schedules($s) { $s['santorelli_desk_minute'] = array('interval' => 60, 'display' => 'Ogni minuto · Santorelli Desk'); return $s; }
+    static function deactivate() { wp_clear_scheduled_hook('santorelli_desk_tick'); }
+    static function settings() { return get_option(self::OPTION, array('connection' => '', 'secret' => '', 'forms' => array())); }
+    static function permissions() { if (!current_user_can('manage_options')) { wp_die('Operazione non autorizzata.'); } }
+    static function admin_menu() { add_options_page('Santorelli Desk', 'Santorelli Desk', 'manage_options', 'santorelli-desk', array(__CLASS__, 'page')); }
+    static function save() {
+        self::permissions(); check_admin_referer('santorelli_desk_save');
+        $s = self::settings();
+        $connection = isset($_POST['connection']) && is_string($_POST['connection']) ? sanitize_text_field(wp_unslash($_POST['connection'])) : '';
+        if (!preg_match('/^[a-f0-9-]{36}$/i', $connection)) { wp_die('Identificativo connessione non valido.'); }
+        $secret = isset($_POST['secret']) && is_string($_POST['secret']) ? trim(wp_unslash($_POST['secret'])) : '';
+        if ($secret !== '' && !preg_match('/^[a-f0-9]{64}$/i', $secret)) { wp_die('Chiave di firma non valida.'); }
+        if ($connection !== ($s['connection'] ?? '') && $secret === '') { wp_die('Una nuova connessione richiede la relativa chiave di firma.'); }
+        $forms = array(); $posted = isset($_POST['forms']) && is_array($_POST['forms']) ? wp_unslash($_POST['forms']) : array();
+        foreach (array_slice($posted, 0, 20) as $row) {
+            if (!is_array($row)) { continue; }
+            $clean = array();
+            foreach (array('form', 'name', 'surname', 'phone', 'email') as $key) { $clean[$key] = isset($row[$key]) && is_string($row[$key]) ? substr(sanitize_text_field($row[$key]), 0, 120) : ''; }
+            if ($clean['form'] !== '' && $clean['name'] !== '' && ($clean['phone'] !== '' || $clean['email'] !== '')) { $forms[] = $clean; }
+        }
+        $encrypted = $secret !== '' ? self::seal($secret) : ($s['secret'] ?? '');
+        if ($encrypted === '') { wp_die('Cifratura non disponibile. Richiedere OpenSSL al fornitore hosting.'); }
+        update_option(self::OPTION, array('connection' => $connection, 'secret' => $encrypted, 'forms' => $forms), false);
+        wp_safe_redirect(admin_url('options-general.php?page=santorelli-desk&desk_notice=saved')); exit;
+    }
+    static function send($payload) {
+        $s = self::settings(); $secret = self::open($s['secret'] ?? '');
+        if (!$secret || empty($s['connection'])) { return new WP_Error('configuration', 'Collegamento non configurato o chiave non decifrabile.'); }
+        $raw = wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $timestamp = (string) time();
+        return wp_safe_remote_post(self::ENDPOINT, array('timeout' => 12, 'redirection' => 0, 'headers' => array('Content-Type' => 'application/json', 'x-desk-connection' => $s['connection'], 'x-desk-timestamp' => $timestamp, 'x-desk-signature' => hash_hmac('sha256', $timestamp . '.' . $raw, $secret)), 'body' => $raw));
+    }
+    static function test() {
+        self::permissions(); check_admin_referer('santorelli_desk_test');
+        $response = self::send(array('action' => 'test'));
+        $ok = !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200;
+        wp_safe_redirect(admin_url('options-general.php?page=santorelli-desk&desk_notice=' . ($ok ? 'test_ok' : 'test_failed'))); exit;
+    }
+    static function capture($record, $handler) {
+        $s = self::settings(); $form = (string) $record->get_form_settings('form_name'); $mapping = null;
+        foreach (($s['forms'] ?? array()) as $candidate) { if ($candidate['form'] === $form) { $mapping = $candidate; break; } }
+        if (!$mapping || empty($s['connection'])) { return; }
+        $fields = $record->get('fields'); $values = array();
+        foreach ((array) $fields as $id => $field) { $values[$id] = isset($field['value']) && is_scalar($field['value']) ? (string) $field['value'] : ''; }
+        $name = trim(($values[$mapping['name']] ?? '') . ' ' . ($values[$mapping['surname']] ?? ''));
+        $meta = $record->get('meta'); $page = isset($meta['page_url']['value']) ? esc_url_raw($meta['page_url']['value']) : esc_url_raw(wp_get_referer());
+        if (!$page || wp_parse_url($page, PHP_URL_HOST) !== wp_parse_url(home_url('/'), PHP_URL_HOST)) { $page = home_url('/'); }
+        $utm = array();
+        foreach (array('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term') as $key) { if (!empty($values[$key])) { $utm[$key] = substr(sanitize_text_field($values[$key]), 0, 250); } }
+        $event = wp_generate_uuid4();
+        $payload = array('event_id' => $event, 'name' => substr(sanitize_text_field($name), 0, 150), 'email' => sanitize_email($values[$mapping['email']] ?? ''), 'phone' => substr(preg_replace('/[^+0-9]/', '', $values[$mapping['phone']] ?? ''), 0, 40), 'form_name' => substr(sanitize_text_field($form), 0, 120), 'form_id' => hash('sha256', home_url('/') . ':' . $form), 'page_url' => $page, 'received_at' => gmdate('c'), 'utm' => $utm, 'referrer' => esc_url_raw($values['referrer'] ?? ''), 'landing_page' => esc_url_raw($values['landing_page'] ?? ''));
+        $sealed = self::seal(wp_json_encode($payload));
+        if ($sealed === '') { return; }
+        global $wpdb;
+        $inserted = $wpdb->insert(self::table(), array('event_id' => $event, 'payload' => $sealed, 'available_at' => gmdate('Y-m-d H:i:s'), 'created_at' => gmdate('Y-m-d H:i:s')), array('%s', '%s', '%s', '%s'));
+        if (!$inserted) { error_log('[santorelli-desk] Impossibile accodare il modulo. Verificare lo spazio e il database WordPress.'); }
+        if (!wp_next_scheduled('santorelli_desk_tick')) { wp_schedule_event(time() + 60, 'santorelli_desk_minute', 'santorelli_desk_tick'); }
+    }
+    static function process() {
+        global $wpdb; $table = self::table();
+        $rows = $wpdb->get_results("SELECT id FROM $table WHERE status IN ('pending','retry') AND attempts<8 AND available_at<=UTC_TIMESTAMP() AND (locked_at IS NULL OR locked_at<DATE_SUB(UTC_TIMESTAMP(), INTERVAL 10 MINUTE)) ORDER BY id LIMIT 5");
+        foreach ($rows as $item) {
+            $locked = $wpdb->query($wpdb->prepare("UPDATE $table SET locked_at=UTC_TIMESTAMP() WHERE id=%d AND (locked_at IS NULL OR locked_at<DATE_SUB(UTC_TIMESTAMP(), INTERVAL 10 MINUTE)) AND status IN ('pending','retry')", $item->id));
+            if (!$locked) { continue; }
+            $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE id=%d", $item->id));
+            $payload = json_decode(self::open($row->payload), true);
+            $response = is_array($payload) ? self::send($payload) : new WP_Error('payload', 'Contenuto non decifrabile.');
+            $code = is_wp_error($response) ? 0 : wp_remote_retrieve_response_code($response);
+            $ok = $code >= 200 && $code < 300; $attempts = (int) $row->attempts + 1;
+            $status = $ok ? 'delivered' : ($attempts >= 8 || $code === 400 || $code === 413 ? 'failed' : 'retry');
+            $wpdb->update($table, array('status' => $status, 'attempts' => $attempts, 'locked_at' => null, 'available_at' => gmdate('Y-m-d H:i:s', time() + min(3600, 60 * pow(2, $attempts))), 'last_error' => $ok ? '' : (is_wp_error($response) ? 'Connessione o configurazione non disponibile' : 'Risposta CRM HTTP ' . $code), 'payload' => $ok ? '' : $row->payload, 'delivered_at' => $ok ? gmdate('Y-m-d H:i:s') : null), array('id' => $row->id));
+        }
+        $wpdb->query("DELETE FROM $table WHERE status='delivered' AND delivered_at<DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)");
+    }
+    static function retry() {
+        self::permissions(); check_admin_referer('santorelli_desk_retry'); global $wpdb;
+        $wpdb->query('UPDATE ' . self::table() . " SET status='pending',attempts=0,locked_at=NULL,available_at=UTC_TIMESTAMP() WHERE status='failed'");
+        self::process(); wp_safe_redirect(admin_url('options-general.php?page=santorelli-desk&desk_notice=retried')); exit;
+    }
+    static function page() {
+        self::permissions(); global $wpdb; $s = self::settings();
+        $notice = isset($_GET['desk_notice']) && is_string($_GET['desk_notice']) ? sanitize_key(wp_unslash($_GET['desk_notice'])) : '';
+        $messages = array('saved' => 'Configurazione salvata.', 'test_ok' => 'Collegamento verificato. Nessun contatto creato.', 'test_failed' => 'Test non riuscito. Verificare connessione, chiave, HTTPS e log hosting.', 'retried' => 'Eventi falliti riaccodati con lo stesso identificativo.');
+        ?><div class="wrap"><h1>Santorelli Desk · Elementor</h1><p>Connettore EmmeLab. Solo recapiti e dati amministrativi: nessun campo clinico viene acquisito.</p>
+        <?php if (isset($messages[$notice])) { ?><div class="notice notice-info"><p><?php echo esc_html($messages[$notice]); ?></p></div><?php } ?>
+        <?php if (!class_exists('ElementorPro\Plugin')) { ?><div class="notice notice-warning"><p>Elementor Pro non rilevato. Il collegamento dei moduli richiede Elementor Pro attivo.</p></div><?php } ?>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="santorelli_desk_save"><?php wp_nonce_field('santorelli_desk_save'); ?>
+        <table class="form-table"><tr><th><label for="desk-connection">Identificativo connessione</label></th><td><input class="regular-text" id="desk-connection" name="connection" required value="<?php echo esc_attr($s['connection'] ?? ''); ?>"></td></tr><tr><th><label for="desk-secret">Chiave di firma</label></th><td><input type="password" autocomplete="new-password" class="regular-text" id="desk-secret" name="secret" value=""><p class="description">Incollare la chiave mostrata una volta nel CRM. Lasciare vuoto per conservare quella salvata. Non viene mai visualizzata.</p></td></tr></table>
+        <h2>Moduli autorizzati e campi</h2><p>Usare un nome univoco in Elementor → Nome modulo. Riportare gli ID dei campi, non le etichette. Compilare solo i moduli da collegare.</p>
+        <table class="widefat striped"><thead><tr><th>Nome modulo esatto</th><th>ID nome</th><th>ID cognome (facoltativo)</th><th>ID telefono</th><th>ID email</th></tr></thead><tbody><?php $forms = $s['forms'] ?? array(); $count = min(20, max(5, count($forms) + 2)); for ($i = 0; $i < $count; $i++) { ?><tr><?php foreach (array('form','name','surname','phone','email') as $key) { ?><td><input style="width:100%" aria-label="<?php echo esc_attr($key . ' modulo ' . ($i + 1)); ?>" name="forms[<?php echo (int) $i; ?>][<?php echo esc_attr($key); ?>]" value="<?php echo esc_attr($forms[$i][$key] ?? ''); ?>"></td><?php } ?></tr><?php } ?></tbody></table>
+        <p>UTM: campi nascosti con ID utm_source, utm_medium, utm_campaign, utm_content, utm_term; valorizzarli in Elementor. Sono facoltativi e non vengono inventati. Campi nascosti referrer e landing_page facoltativi. I parametri sensibili nelle URL vengono rimossi dal CRM.</p><?php submit_button('Salva configurazione'); ?></form>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="santorelli_desk_test"><?php wp_nonce_field('santorelli_desk_test'); submit_button('Verifica collegamento', 'secondary'); ?></form>
+        <h2>Coda e log di consegna</h2><p>La consegna riuscita svuota i recapiti dalla coda WordPress. I log tecnici vengono conservati per 30 giorni. Gli eventi falliti rimangono cifrati fino alla risoluzione. Conservare le chiavi di WordPress: cambiarle impedisce di decifrare coda e segreto.</p><p>WP-Cron dipende dalle visite al sito. Per retry puntuali anche senza visitatori, configurare presso l’hosting l’esecuzione periodica del cron WordPress. Un’interruzione del CRM non annulla l’invio del modulo.</p>
+        <table class="widefat striped"><thead><tr><th>Evento</th><th>Ricezione UTC</th><th>Stato</th><th>Tentativi</th><th>Errore tecnico</th></tr></thead><tbody><?php $rows = $wpdb->get_results('SELECT event_id,created_at,status,attempts,last_error FROM ' . self::table() . ' ORDER BY id DESC LIMIT 30'); $labels = array('pending'=>'In coda','retry'=>'Nuovo tentativo previsto','failed'=>'Da verificare','delivered'=>'Acquisito dal CRM'); foreach ($rows as $r) { ?><tr><td><?php echo esc_html($r->event_id); ?></td><td><?php echo esc_html($r->created_at); ?></td><td><?php echo esc_html($labels[$r->status] ?? 'Da verificare'); ?></td><td><?php echo (int) $r->attempts; ?></td><td><?php echo esc_html($r->last_error); ?></td></tr><?php } ?></tbody></table>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="santorelli_desk_retry"><?php wp_nonce_field('santorelli_desk_retry'); submit_button('Riprova eventi falliti', 'secondary'); ?></form></div><?php
+    }
+}
+add_filter('cron_schedules', array('Santorelli_Desk_Connector','schedules'));
+register_activation_hook(__FILE__, array('Santorelli_Desk_Connector','activate'));
+register_deactivation_hook(__FILE__, array('Santorelli_Desk_Connector','deactivate'));
+add_action('admin_menu', array('Santorelli_Desk_Connector','admin_menu'));
+add_action('admin_post_santorelli_desk_save', array('Santorelli_Desk_Connector','save'));
+add_action('admin_post_santorelli_desk_test', array('Santorelli_Desk_Connector','test'));
+add_action('admin_post_santorelli_desk_retry', array('Santorelli_Desk_Connector','retry'));
+add_action('santorelli_desk_tick', array('Santorelli_Desk_Connector','process'));
+add_action('elementor_pro/forms/new_record', array('Santorelli_Desk_Connector','capture'), 10, 2);

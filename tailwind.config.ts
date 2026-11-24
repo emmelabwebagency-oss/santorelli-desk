@@ -18,6 +18,7 @@ export default {
       },
     },
     extend: {
+      fontFamily: { sans: ['Arial', 'Helvetica', 'sans-serif'] },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

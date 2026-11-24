@@ -1,0 +1,22 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Mail, RefreshCw, ExternalLink } from 'lucide-react';
+import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { Button } from '@/components/ui/button';
+import { dateTime } from '@/lib/desk';
+import { useSession } from './SessionProvider';
+
+export default function EmailOperations() {
+  const {member}=useSession();
+  const [busy,setBusy]=useState(false);
+  const {data,refetch,isError}=useQuery({queryKey:['email-operations',member?.id],enabled:member?.role==='super_admin',refetchInterval:30000,queryFn:async()=>{
+    const [health,queue]=await Promise.all([supabase.from('desk_service_health').select('*').eq('name','email').maybeSingle(),supabase.from('desk_email_outbox').select('id,subject,status,attempts,created_at,last_error,sent_at,delivery_status').order('created_at',{ascending:false}).limit(30)]);
+    if(health.error||queue.error)throw new Error('Stato email non disponibile');return {health:health.data,queue:queue.data||[]};
+  }});
+  if(member?.role!=='super_admin') return null;
+  async function run(test:boolean){setBusy(true);try{const {data,error}=await supabase.functions.invoke('desk-email',{body:{action:test?'test':'process'}});if(error||data?.error)toast.error(data?.error||'Worker non raggiungibile. Verificare stato funzione e configurazione.');else if(!data.configured)toast.warning(data.message);else toast.success(data.message);await refetch();}catch{toast.error('Servizio non raggiungibile');}finally{setBusy(false);}}
+  async function retry(id:string){setBusy(true);try{const {error}=await supabase.rpc('desk_email_retry',{p_id:id});if(error)toast.error(error.message);else toast.success('Nuovo tentativo accodato');await refetch();}finally{setBusy(false);}}
+  const labels:Record<string,string>={configurazione_mancante:'Configurazione incompleta',errori_consegna:'Errori da verificare',invio_accettato:'Ultimo invio accettato dal provider',pronto_nessun_invio:'Configurato · nessun invio nel ciclo'};
+  return <section className="desk-panel"><div className="panel-heading"><div><h3>Email operative</h3><p>{isError?'Stato non disponibile: riprovare':data?.health?`${labels[data.health.status]||data.health.status} · ${dateTime(data.health.checked_at)}`:'Verifica iniziale in attesa'}</p></div><Mail size={20} className="text-blue-600"/></div><div className="space-y-4 px-6 pb-6"><p className="text-xs leading-6 text-slate-500">Il worker è pianificato sul server ogni minuto. Richiede RESEND_API_KEY, DESK_EMAIL_FROM e DESK_APP_ORIGIN nei segreti server. Le email non contengono dati dei contatti. Per le ricevute configura anche RESEND_WEBHOOK_SECRET e il webhook desk-email-events.</p><div className="flex flex-wrap gap-2"><Button disabled={busy} className="rounded-xl" onClick={()=>run(true)}>Invia test alla mia email</Button><Button disabled={busy} variant="outline" className="rounded-xl" onClick={()=>run(false)}><RefreshCw size={14}/>Elabora coda</Button><a href="https://supabase.com/dashboard/project/smbiewvuspweetdjbnwe/functions/secrets" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600">Configura segreti<ExternalLink size={13}/></a></div><p className="text-[11px] leading-5 text-slate-500">Test limitato a una email ogni 5 minuti. “Inviata” significa accettata dal provider; “consegnata” richiede una ricevuta firmata. Otto tentativi al massimo, con attesa crescente. Dopo 23 ore dall’avvio è necessaria una verifica manuale per evitare duplicazioni.</p></div><div className="divide-y border-t">{data?.queue.map(row=><div key={row.id} className="flex flex-wrap items-start justify-between gap-3 px-6 py-4"><div><p className="text-xs font-medium">{row.subject}</p><p className="mt-1 text-[10px] text-slate-500">{dateTime(row.created_at)} · Tentativi: {row.attempts}</p>{row.last_error&&<p className="mt-2 text-xs text-red-700">{row.last_error}</p>}</div><div className="flex flex-wrap items-center gap-2"><span className="status-pill">{row.status.replace(/_/g,' ')}</span>{row.sent_at&&<span className="text-[10px] text-slate-600">{row.delivery_status.replace(/_/g,' ')}</span>}{row.status==='fallita'&&<Button disabled={busy} variant="outline" size="sm" className="rounded-lg text-xs" onClick={()=>retry(row.id)}>Riprova</Button>}</div></div>)}{data?.queue.length===0&&<p className="px-6 py-5 text-xs text-slate-500">Nessuna email in coda.</p>}</div></section>;
+}
