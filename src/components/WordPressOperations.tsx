@@ -22,6 +22,7 @@ export default function WordPressOperations(){
     if(connections.error||status.error)throw new Error('Stato WordPress non disponibile');
     return {connections:(connections.data||[]) as Connection[],queue:status.data as QueueStatus};
   }});
+  if(member?.role==='segretaria')return <section className="desk-panel"><div className="panel-heading"><div><h3>WordPress / Elementor</h3><p>Importazione contatti del tuo studio, manuale e automatica ogni ora.</p></div><Globe2 className="text-blue-600" size={22}/></div><div className="px-6 pb-6"><WordPressImports/></div></section>;
   if(!member||!['admin','super_admin'].includes(member.role))return null;
   async function create(e:React.FormEvent){e.preventDefault();setBusy(true);try{const {data,error}=await supabase.rpc('desk_wp_create',{p_site_url:site});if(error)throw error;setCredential(data);await refetch();}catch(e){toast.error((e as Error).message);}finally{setBusy(false);}}
   async function manage(c:Connection,rotate=false){if(rotate&&!window.confirm('Ruotare la chiave? La precedente non sarà più valida. Dovrai aggiornare il plugin WordPress.'))return;setBusy(true);try{const {data,error}=await supabase.rpc('desk_wp_manage',{p_id:c.id,p_enabled:rotate?true:!c.enabled,p_rotate:rotate});if(error)throw error;if(rotate)setCredential(data);else toast.success(c.enabled?'Acquisizione sospesa':'Acquisizione riabilitata');await refetch();}catch(e){toast.error((e as Error).message);}finally{setBusy(false);}}

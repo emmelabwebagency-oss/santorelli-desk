@@ -14,16 +14,21 @@ INSTALLAZIONE / AGGIORNAMENTO
 6. Collaudare su staging con dati sintetici prima di importare dati reali.
 
 SCARICA TUTTO / SCARICA NUOVI (DAL CRM)
-I pulsanti importano dati in Desk, non generano un file locale. Disponibili ad Admin Studio e Super Admin per lo studio di appartenenza.
+I pulsanti importano dati in Desk, non generano un file locale. Disponibili a Segretaria, Admin Studio e Super Admin per il solo studio di appartenenza. La segreteria non accede a chiavi, configurazione, sospensione dei collegamenti o gestione del plugin.
 Scarica tutto: legge lo storico ancora salvato da Elementor per i moduli mappati.
-Scarica nuovi: riparte dall'ultimo ID letto dalle importazioni manuali. Alla prima importazione recupera lo storico disponibile. Anche gli invii non mappati o non validi vengono superati: per recuperarli dopo aver corretto le mappature usare Scarica tutto.
+Scarica nuovi: riparte dall'ultimo ID letto dalle importazioni manuali o orarie. Alla prima importazione recupera lo storico disponibile. Anche gli invii non mappati o non validi vengono superati: per recuperarli dopo aver corretto le mappature usare Scarica tutto.
 WordPress ritira il comando con richiesta firmata in uscita, senza esporre nuove API pubbliche sul sito. Ogni ciclo legge fino a 25 righe e accoda solo nome, cognome, telefono, email e attribuzioni consentite. Una sola importazione per connessione può essere attiva.
-L'avanzamento distingue lettura, invii accodati o già presenti, esclusi ed errori. Lettura completata NON significa consegna completata: controllare anche Importati / In coda / Falliti. Le righe non mappate o con dati insufficienti sono escluse e contate, non presentate come importate.
+L'avanzamento distingue lettura, invii accodati o già presenti, esclusi ed errori. Lettura completata NON significa consegna completata: controllare anche Importati / In coda / Falliti (pannello amministratore). Le righe non mappate o con dati insufficienti sono escluse e contate, non presentate come importate.
 I comandi e l'elaborazione proseguono dopo la chiusura del CRM. Senza cron WordPress restano in attesa. Il CRM mostra l'ultimo controllo ricevuto dal sito.
+
+PIANIFICAZIONE AUTOMATICA OGNI ORA
+Nel database Supabase il job pg_cron santorelli-wordpress-import-orario esegue desk_wp_schedule_hourly() al minuto zero di ogni ora (0 * * * *), senza bisogno di aprire Desk. Non richiede un nuovo aggiornamento oltre al plugin 1.1.0.
+Richiede Scarica nuovi per ciascun collegamento attivo, verificato, con versione 1.1.0 e almeno un controllo ricevuto. Se una lettura manuale o automatica è già attiva, non la duplica. Origine automatica oraria e avanzamento sono visibili anche alla segreteria. Connessioni sospese o non pronte sono escluse.
+È una richiesta di recupero incrementale, non una conferma di consegna: il plugin deve poter eseguire WP-Cron. Questo job server non configura né sostituisce il cron dell'hosting WordPress. Restano attivi il controllo del plugin e il worker CRM ogni minuto per consegne e retry. Il primo recupero orario con cursore a zero legge lo storico disponibile: verificare i doppioni delle versioni precedenti prima di aggiornare il plugin in produzione.
 
 NUOVI MODULI E DOPPIONI
 Dalla versione 1.1.0, gli invii salvati con l'azione Elementor save-to-database vengono letti automaticamente dal cron, con lo stesso ID stabile usato dal recupero storico. Le altre azioni del modulo non vengono modificate.
-All'aggiornamento viene inizializzato un cursore automatico all'ultimo ID già esistente; il vecchio storico viene recuperato solo su richiesta esplicita. I moduli senza Raccolta invii continuano a usare il webhook al momento dell'invio, ma non hanno storico recuperabile.
+All'aggiornamento viene inizializzato il cursore automatico locale all'ultimo ID già esistente. Lo storico precedente viene recuperato dai comandi Desk o dal primo recupero orario se il cursore di importazione server è ancora a zero. I moduli senza Raccolta invii continuano a usare il webhook al momento dell'invio, ma non hanno storico recuperabile.
 ID deterministico per connessione e ID invio Elementor, coda WordPress univoca e vincolo univoco nel CRM rendono sicuri ritrasmissioni e riletture. La deduplicazione vale anche dopo la pulizia dei log WordPress, perché il CRM conserva l'ID esterno.
 ATTENZIONE: gli invii già acquisiti dalla versione 1.0.0 avevano ID casuali, non riconducibili agli ID Elementor. Prima di recuperare uno storico già importato con quella versione controllare le richieste pregresse: la deduplicazione retroattiva non è garantita. Non vengono unite arbitrariamente richieste diverse della stessa persona.
 Se si cambia connessione o si ripristinano tabelle Elementor con ID riutilizzati, verificare prima i riferimenti esterni con l'assistenza tecnica.

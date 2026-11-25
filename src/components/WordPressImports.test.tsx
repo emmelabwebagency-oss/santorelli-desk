@@ -15,21 +15,21 @@ function markup(overrides: Record<string, unknown> = {}, role = 'super_admin') {
 }
 
 describe('Importazioni WordPress', () => {
-  it('offre entrambe le azioni agli amministratori dello studio', () => {
-    for (const role of ['admin', 'super_admin']) {
+  it('offre entrambe le azioni anche alla segreteria dello studio', () => {
+    for (const role of ['admin', 'super_admin', 'segretaria']) {
       const html = markup({}, role);
       expect(html).toContain('Scarica tutto');
       expect(html).toContain('Scarica nuovi');
       expect(html).not.toContain('disabled=""');
     }
   });
-  it('non espone le azioni alla segreteria', () => {
-    expect(markup({}, 'segretaria')).toBe('');
+  it('non espone le azioni a ruoli non autorizzati', () => {
+    expect(markup({}, 'unknown')).toBe('');
   });
   it('richiede l’aggiornamento prima di abilitare le azioni', () => {
     const html = markup({ plugin_version: null });
     expect(html.match(/disabled=""/g)).toHaveLength(2);
-    expect(html).toContain('Aggiorna il plugin WordPress');
+    expect(html).toContain('Verifica che il plugin WordPress sia aggiornato');
   });
   it('impedisce importazioni contemporanee e mostra l’avanzamento', () => {
     const html = markup({ job: { id: 'job', mode: 'all', status: 'running', queued: 25, skipped: 3, message: null, updated_at: '2026-01-01T00:00:00Z' } });
@@ -43,5 +43,18 @@ describe('Importazioni WordPress', () => {
     expect(html).toContain('Importazione interrotta');
     expect(html).toContain('Archivio non disponibile');
     expect(html).toContain('Verifica WP-Cron');
+  });
+  it('mostra frequenza e origine delle importazioni automatiche', () => {
+    const html = markup({ job: { id: 'job', mode: 'new', source: 'hourly', status: 'pending', queued: 0, skipped: 0, message: null, updated_at: '2026-01-01T00:00:00Z' } }, 'segretaria');
+    expect(html).toContain('Importazione automatica ogni ora');
+    expect(html).toContain('anche con Desk chiuso');
+    expect(html).toContain('Automatica oraria');
+    expect(html).toContain('In attesa del sito');
+  });
+  it('indirizza la segreteria all’amministratore quando manca il plugin', () => {
+    const html = markup({ plugin_version: null }, 'segretaria');
+    expect(html).toContain('Chiedi all’amministratore');
+    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(html).not.toContain('ZIP');
   });
 });
