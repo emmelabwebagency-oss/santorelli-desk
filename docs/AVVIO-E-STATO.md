@@ -1,5 +1,9 @@
 # Santorelli Desk — avvio tecnico e stato reale
 
+## Aggiornamento accesso: Resend diretto
+
+Per login e inviti vale la configurazione aggiornata in [Accesso e pubblicazione](ACCESSO-E-PUBBLICAZIONE.md): API Resend con `RESEND_API_KEY`, nessun SMTP Auth, bootstrap del solo `info@emmelab.it` alla prima richiesta di codice. Le indicazioni SMTP, `desk-admin` azione bootstrap e segreti `DESK_BOOTSTRAP_*` nelle sezioni storiche sotto sono superate. Il recupero password precedente resta separato. Il collaudo reale va distinto dai test locali e dal deployment delle funzioni.
+
 ## Ambito di questa consegna
 
 Il nucleo CRM è stato esteso: non si tratta ancora di una certificazione di rilascio sanitario o del completamento di tutte le fasi del progetto. Nessun connettore è dichiarato operativo solo perché il codice o la configurazione esistono. Nessuna credenziale è inclusa nei sorgenti. Non usare dati paziente prima del collaudo autorizzato.

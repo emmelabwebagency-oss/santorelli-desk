@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8';
+import { deskOrigin, sendAuthEmail } from '../_shared/auth-email.ts';
 
 const cors = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods':'POST, OPTIONS' };
 Deno.serve(async (req: Request) => {
@@ -13,9 +14,9 @@ Deno.serve(async (req: Request) => {
     try{input=JSON.parse(raw);}catch{return reply({error:'Richiesta non valida'},400);}
     const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
     if(email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return reply({error:'Indirizzo email non valido'},400);
-    const allowed=(Deno.env.get('DESK_AUTH_ALLOWED_ORIGINS')||'').split(',').concat(Deno.env.get('DESK_APP_ORIGIN')||'').map(v=>v.trim()).filter(Boolean);
+    const allowed=(Deno.env.get('DESK_AUTH_ALLOWED_ORIGINS')||'').split(',').concat(deskOrigin).map(v=>v.trim()).filter(Boolean);
     const origin=req.headers.get('Origin');
-    if(!allowed.length)return reply({error:'Accesso email non ancora configurato. Contatta il responsabile tecnico.'},503);
+    if(!Deno.env.get('RESEND_API_KEY'))return reply({error:'Servizio email non configurato'},503);
     if(!origin||!allowed.includes(origin))return reply({error:'Origine dell’app non autorizzata'},403);
     let callback:URL;
     try{
@@ -28,9 +29,23 @@ Deno.serve(async (req: Request) => {
     const {data:allowedUser,error}=await db.rpc('desk_login_request',{p_email:email});
     if(error){console.error('[desk-login] Verifica autorizzazione non disponibile',{code:error.code});return reply({error:'Accesso temporaneamente non disponibile. Riprova più tardi.'},503);}
     if(allowedUser===true){
-      const auth=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_ANON_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
-      const {error:sendError}=await auth.auth.signInWithOtp({email,options:{shouldCreateUser:false,emailRedirectTo:callback.href}});
-      if(sendError)console.warn('[desk-login] Richiesta OTP non accettata dal provider',{code:sendError.code||'provider_error'});
+      try {
+        const {data:link,error:linkError}=await db.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:callback.href}});
+        if(linkError||!link.user||!link.properties?.email_otp)throw new Error('Generazione codice non riuscita');
+        const {data:profile,error:profileError}=await db.from('desk_members').select('id,active').eq('id',link.user.id).maybeSingle();
+        if(profileError)throw new Error('Verifica profilo non riuscita');
+        if(!profile){
+          const {error:bootstrapError}=await db.rpc('desk_bootstrap_member',{p_user:link.user.id});
+          if(bootstrapError)throw new Error('Abilitazione iniziale non riuscita');
+          console.info('[desk-login] Primo Super Admin abilitato');
+        }else if(!profile.active)throw new Error('Profilo non attivo');
+        const code=link.properties.email_otp;
+        if(!/^\d{6,10}$/.test(code))throw new Error('Formato codice non supportato');
+        await sendAuthEmail('desk-login',email,'Il tuo codice di accesso a Santorelli Desk',`Il tuo codice di accesso è: ${code}\n\nInseriscilo nella pagina di accesso a Santorelli Desk. Il codice è personale, monouso e ha validità limitata. Non condividerlo.\n\nSe non hai richiesto l’accesso, ignora questa email.`);
+      } catch {
+        // La risposta resta identica anche se l’indirizzo non è autorizzato.
+        console.error('[desk-login] Generazione o consegna codice non riuscita');
+      }
     }
     return reply({message:'Se l’indirizzo è autorizzato, riceverai un codice monouso via email. Controlla anche la posta indesiderata.'});
   }catch{
