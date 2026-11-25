@@ -28,7 +28,7 @@ Deno.serve(async (req: Request) => {
       const { data: caller } = await db.from('desk_members').select('*').eq('id', auth.user.id).eq('active', true).single();
       if (!caller || caller.tenant_id !== tenant || !['super_admin', 'admin'].includes(caller.role)) return reply({ error: 'Permessi insufficienti' }, 403);
       role = input.role;
-      if (!['segretaria', 'admin'].includes(role) || (caller.role === 'admin' && role !== 'segretaria')) return reply({ error: 'Ruolo non consentito' }, 403);
+      if (!['segretaria', 'admin', 'super_admin'].includes(role) || (caller.role === 'admin' && role !== 'segretaria')) return reply({ error: 'Ruolo non consentito' }, 403);
       email = String(input.email || '').trim(); name = String(input.name || '').trim();
     } else return reply({ error: 'Operazione non disponibile' }, 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || name.length < 2 || name.length > 150) return reply({ error: 'Nome o email non validi' }, 400);
