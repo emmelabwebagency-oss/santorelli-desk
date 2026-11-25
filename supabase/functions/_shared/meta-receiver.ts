@@ -49,12 +49,6 @@ export function metaReceiver(kind: 'meta' | 'whatsapp') {
               if (typeof message.id !== 'string' || message.id.length > 250 || !/^\d{7,20}$/.test(message.from || '') || !/^\d{10}$/.test(message.timestamp || '')) continue;
               const received = new Date(Number(message.timestamp) * 1000);
               if (received.getTime() > Date.now() + 300000) continue;
-              const optout = message.type === 'text' && typeof message.text?.body === 'string' && ['STOP','ANNULLA','BASTA'].includes(message.text.body.trim().toUpperCase());
-              if (optout) {
-                const { error } = await db.rpc('desk_wa_inbound_optout', { p_connection: connection.id, p_phone: '+' + message.from });
-                if (error) throw error;
-                continue;
-              }
               const profile = (value.contacts || []).find((x: { wa_id: string }) => x.wa_id === message.from)?.profile;
               const referral = message.referral?.source_type === 'ad' && /^\d+$/.test(String(message.referral?.source_id || '')) ? { original_source: 'Meta Ads', referral_id: String(message.referral.source_id) } : { original_source: 'Origine non determinata' };
               events.push({ external_id: message.id, payload: { name: typeof profile?.name === 'string' ? profile.name.trim().slice(0, 150) || 'Contatto WhatsApp' : 'Contatto WhatsApp', phone: '+' + message.from, email: '', received_at: received.toISOString(), attribution: referral } });

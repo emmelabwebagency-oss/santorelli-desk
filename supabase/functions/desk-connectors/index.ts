@@ -31,7 +31,7 @@ Deno.serve(async(req:Request)=>{
         const connection=c as Connection;
         await db.from('desk_connections').update({last_attempt_at:new Date().toISOString()}).eq('id',c.id);
         if(job.kind==='test'||!c.verified_at){
-          try{await testConnection(db,connection);}catch(e){await db.from('desk_connections').update({verified_at:null}).eq('id',c.id);throw e;}
+          try{await testConnection(connection);}catch(e){await db.from('desk_connections').update({verified_at:null}).eq('id',c.id);throw e;}
           const {error}=await db.from('desk_connections').update({verified_at:new Date().toISOString(),last_error:null}).eq('id',c.id);if(error)throw error;
         }
         const result=job.kind==='test'?{continuation:false,records:0}:await syncConnection(db,connection);
