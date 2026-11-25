@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import BrandLogo from '@/components/BrandLogo';
 import Appointments from '@/components/Appointments';
+import StaffReports from '@/components/StaffReports';
 import SyncReminder from '@/components/SyncReminder';
 import { Link, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,7 +18,7 @@ import DeskOverview, { EmptyState } from '@/components/DeskOverview';
 import { Analytics, Connections, Notifications, RequestList, Settings } from '@/components/DeskSections';
 import { InquiryDetail, NewInquiry } from '@/components/InquiryDialog';
 
-const subtitles:Record<string,string> = { dashboard:'Una visione chiara, per prenderti cura di ogni richiesta.', incoming:'Il primo passo è esserci. Prendi in carico una nuova richiesta.', contacts:'Le persone e le loro richieste, con una storia sempre tracciabile.', tasks:'Il prossimo contatto, al momento giusto.', appointments:'Agenda ufficiale e preferenze amministrative, senza automatismi clinici.', analytics:'Numeri verificabili per comprendere il lavoro dello studio.', notifications:'Nessun prossimo passo dimenticato.', sync:'Tutte le connessioni, il loro stato reale.', settings:'Organizzazione, accessi e trasparenza operativa.' };
+const subtitles:Record<string,string> = { dashboard:'Una visione chiara, per prenderti cura di ogni richiesta.', incoming:'Il primo passo è esserci. Prendi in carico una nuova richiesta.', contacts:'Le persone e le loro richieste, con una storia sempre tracciabile.', tasks:'Il prossimo contatto, al momento giusto.', appointments:'Agenda ufficiale e preferenze amministrative, senza automatismi clinici.', analytics:'Numeri verificabili per comprendere il lavoro dello studio.', reports:'Il tuo lavoro, in un report chiaro e scaricabile per il periodo scelto.', notifications:'Nessun prossimo passo dimenticato.', sync:'Tutte le connessioni, il loro stato reale.', settings:'Organizzazione, accessi e trasparenza operativa.' };
 const emptyData={ inquiries:[],tasks:[],activity:[],members:[],sites:[],notices:[] };
 export default function Index() {
   const { session,member,loading,error,recovery }=useSession();
@@ -43,6 +44,7 @@ export default function Index() {
   {section==='dashboard' && technical && <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-3">{[['Studio configurato','Santorelli Desk'],['Accessi autorizzati',String(data.members.length)],['Servizi esterni','Stato nel centro']].map(([label,value])=><div className="desk-panel p-6" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-4 text-2xl font-semibold">{value}</p></div>)}</div><div className="desk-panel p-6"><h2 className="brand text-2xl">Controllo tecnico, non accesso ai pazienti.</h2><p className="mt-4 text-sm leading-7 text-slate-500">Questo account gestisce la piattaforma. Le politiche del database non consentono di leggere contatti, richieste e attività clinico-amministrative. Il supporto temporaneo richiede il consenso dell’Admin Studio ed espone soltanto la diagnostica di una singola richiesta, senza anagrafica o note. È disponibile nelle Impostazioni.</p></div><Connections/></div>}
   {['incoming','contacts','tasks'].includes(section) && (guest ? <section className="desk-panel"><EmptyState title="Questo spazio è riservato" subtitle="Accedi con il tuo account personale per visualizzare le richieste e utilizzare le azioni operative."/><div className="pb-8 text-center"><Button asChild className="rounded-xl"><Link to="/accesso">Accedi allo studio</Link></Button></div></section> : <RequestList key={section} inquiries={filtered} tasks={data.tasks} members={data.members} mode={section} onSelect={setSelected}/>)}
   {section==='analytics' && (admin ? <Analytics/> : <section className="desk-panel"><EmptyState title="Analisi riservate all’Admin Studio" subtitle="Accedi con un account autorizzato per consultare i report verificati dello studio."/></section>)}
+  {section==='reports' && <StaffReports/>}
   {section==='appointments' && <Appointments inquiries={data.inquiries} onSelect={setSelected}/>}
   {section==='notifications' && <Notifications notices={data.notices}/>}
   {section==='sync' && <Connections/>}

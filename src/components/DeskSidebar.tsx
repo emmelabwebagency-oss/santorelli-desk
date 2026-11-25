@@ -1,4 +1,4 @@
-import { LayoutDashboard, Inbox, UsersRound, CalendarDays, ChartNoAxesCombined, RefreshCw, Settings2, Bell, ShieldCheck, ArrowUpRight, PanelLeftClose, X } from 'lucide-react';
+import { LayoutDashboard, Inbox, UsersRound, CalendarDays, ChartNoAxesCombined, FileText, RefreshCw, Settings2, Bell, ShieldCheck, ArrowUpRight, PanelLeftClose, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Member } from '@/lib/desk';
 import BrandLogo from './BrandLogo';
@@ -10,6 +10,7 @@ export const navigation = [
   { id:'tasks', label:'Attività e richiami', icon:CalendarDays },
   { id:'appointments', label:'Appuntamenti e attesa', icon:CalendarDays },
   { id:'analytics', label:'Analisi lead', icon:ChartNoAxesCombined },
+  { id:'reports', label:'Report PDF', icon:FileText },
   { id:'notifications', label:'Notifiche', icon:Bell },
   { id:'sync', label:'Centro sincronizzazione', icon:RefreshCw },
   { id:'settings', label:'Impostazioni', icon:Settings2 },
