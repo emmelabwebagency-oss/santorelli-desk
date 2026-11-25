@@ -11,6 +11,7 @@ import PracticeManagement from './PracticeManagement';
 import EmailOperations from './EmailOperations';
 import WordPressOperations from './WordPressOperations';
 import ExternalConnections from './ExternalConnections';
+import SyncControls from './SyncControls';
 import { SyncReminderSettings } from './SyncReminder';
 import CampaignAnalytics from './CampaignAnalytics';
 import HistoryImport from './HistoryImport';
@@ -31,7 +32,7 @@ export function Analytics() { return <CampaignAnalytics/>; }
 export function Notifications({ notices }: { notices:Notice[] }) { return <section className="desk-panel"><div className="panel-heading"><div><h3>Le tue notifiche</h3><p>Promemoria generati dal pianificatore server.</p></div></div>{notices.length ? <div className="divide-y">{notices.map(n=><div key={n.id} className="flex gap-3 p-5"><Clock3 size={18} className="shrink-0 text-blue-500"/><div><p className="text-sm text-slate-700">{n.title}</p><p className="mt-2 text-xs text-slate-400">{dateTime(n.created_at)}</p></div></div>)}</div> : <EmptyState title="Nessuna notifica" subtitle="Richiami ed escalation verranno segnalati qui, anche se il promemoria viene generato mentre sei offline."/>}</section>; }
 
 export function Connections() {
-  return <div className="space-y-6"><ExternalConnections/><WordPressOperations/></div>;
+  return <div className="space-y-6"><SyncControls/><ExternalConnections/><WordPressOperations/></div>;
 }
 
 export function Settings({ member, members, sites }: { member:Member; members:Member[]; sites:Site[] }) {
