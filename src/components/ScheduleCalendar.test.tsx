@@ -26,4 +26,16 @@ describe('Calendario appuntamenti e attesa',()=>{
     const html=renderToStaticMarkup(<ScheduleCalendar entries={[]} renderEntry={()=>null}/>);
     expect(html).toContain('Nessun appuntamento per il giorno selezionato');
   });
+  it('distingue i richiami dagli appuntamenti e mantiene tutti i richiami dello stesso giorno',()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date(2030,3,1,12));
+    const html=renderToStaticMarkup(<ScheduleCalendar kind="tasks" entries={[{id:'first',date:localDayKey(new Date()),time:'09:00',title:'Primo richiamo'},{id:'second',date:localDayKey(new Date()),time:'11:00',title:'Secondo richiamo'}]} renderEntry={id=><button>Richiama {id}</button>}/>);
+    expect(html).toContain('Calendario attività e richiami');
+    expect(html).toContain('Richiama first');
+    expect(html).toContain('Richiama second');
+    expect(html).not.toContain('Calendario appuntamenti');
+  });
+  it('mostra il messaggio corretto se non ci sono richiami in scadenza',()=>{
+    const html=renderToStaticMarkup(<ScheduleCalendar kind="tasks" entries={[]} renderEntry={()=>null}/>);
+    expect(html).toContain('Nessun richiamo aperto in scadenza nel giorno selezionato');
+  });
 });
