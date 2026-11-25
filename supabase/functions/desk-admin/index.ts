@@ -32,7 +32,7 @@ Deno.serve(async (req: Request) => {
       email = String(input.email || '').trim(); name = String(input.name || '').trim();
     } else return reply({ error: 'Operazione non disponibile' }, 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || name.length < 2 || name.length > 150) return reply({ error: 'Nome o email non validi' }, 400);
-    const { data: invited, error: inviteError } = await db.auth.admin.inviteUserByEmail(email, { redirectTo: new URL('/reset-password', origin).href });
+    const { data: invited, error: inviteError } = await db.auth.admin.inviteUserByEmail(email, { redirectTo: new URL('/auth/callback', origin).href });
     if (inviteError || !invited.user) {
       console.error('[desk-admin] Invito non riuscito', { code: inviteError?.code });
       return reply({ error: 'Invito non riuscito. Verificare configurazione email ed eventuale account esistente.' }, 400);

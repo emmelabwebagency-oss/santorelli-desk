@@ -25,6 +25,7 @@ export default function Index() {
   const [section,setSection]=useState('dashboard'); const [mobile,setMobile]=useState(false); const [create,setCreate]=useState(false); const [selected,setSelected]=useState<Inquiry|null>(null); const [search,setSearch]=useState('');
   const queryClient=useQueryClient();
   if(recovery) return <Navigate to="/reset-password" replace/>;
+  if(!loading&&!session) return <Navigate to="/accesso" replace/>;
   const guest=!session;
   const admin=member?.role==='admin'; const technical=member?.role==='super_admin';
   const name=member?.full_name.split(' ')[0];
