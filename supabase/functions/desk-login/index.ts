@@ -6,6 +6,7 @@ Deno.serve(async (req: Request) => {
   const reply=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json','Cache-Control':'no-store'}});
   if(req.method!=='POST')return reply({error:'Metodo non consentito'},405);
   try {
+    if(Number(req.headers.get('content-length'))>2048)return reply({error:'Richiesta troppo grande'},413);
     const raw=await req.text();
     if(new TextEncoder().encode(raw).length>2048)return reply({error:'Richiesta non valida'},400);
     let input;
@@ -19,7 +20,8 @@ Deno.serve(async (req: Request) => {
     let callback:URL;
     try{
       const base=new URL(origin);
-      if(base.origin!==origin||base.username||base.password||!(base.protocol==='https:'||(base.protocol==='http:'&&['localhost','127.0.0.1'].includes(base.hostname))))throw new Error('Origin');
+      const local=base.hostname==='localhost'||base.hostname==='127.0.0.1'||base.hostname.endsWith('.localhost');
+      if(base.origin!==origin||base.username||base.password||!(base.protocol==='https:'||(base.protocol==='http:'&&local)))throw new Error('Origin');
       callback=new URL('/auth/callback',base);
     }catch{return reply({error:'Origine dell’app non valida'},400);}
     const db=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});

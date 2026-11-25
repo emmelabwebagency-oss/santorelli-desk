@@ -49,7 +49,7 @@ In Supabase → Edge Functions → Manage Secrets configurare:
 - `DESK_BOOTSTRAP_EMAIL`: casella individuale del primo amministratore EmmeLab.
 - `DESK_BOOTSTRAP_SECRET`: almeno 32 caratteri casuali, esclusivamente server.
 
-Da un client server fidato invocare `desk-admin`, azione `bootstrap`, con l’header `x-bootstrap-secret`. Il bootstrap crea il primo Super Admin una sola volta con lock transazionale. Il destinatario imposta la password dal link Auth; nessuna password predefinita. Rimuovere il segreto di bootstrap dopo il successo. Mai inserire segreti o password in chat.
+Da un client server fidato invocare `desk-admin`, azione `bootstrap`, con l’header `x-bootstrap-secret`. Il bootstrap crea il primo Super Admin una sola volta con lock transazionale. Il destinatario accede con il codice email del login ordinario; gli inviti nuovi tornano su /auth/callback, senza richiedere una password. Rimuovere il segreto di bootstrap dopo il successo. Mai inserire segreti o password in chat.
 
 Allowlist Auth: URL assoluti di `/auth/callback` e `/reset-password` per preview e deployment. I template personalizzati devono rispettare RedirectTo. Configurare SMTP Auth e template italiani e collaudare inviti/reset. L’email Auth è distinta dalle email operative Resend.
 
@@ -127,3 +127,11 @@ I test frontend aggiunti coprono BOM, delimitatori, virgolette, multilinea, zeri
 ### Correzione del download plugin per hosting PHP
 
 Il sorgente scaricato dal browser è ora `public/downloads/santorelli-desk/santorelli-desk-source.txt`, senza alcuna estensione `.php`. Questo evita che un handler PHP del server lo esegua anziché restituire il codice. Lo ZIP generato conserva il nome installabile `santorelli-desk/santorelli-desk.php`: non cambia l’installazione in WordPress. Il test del pacchetto verifica sia il nome dell’asset statico sia l’integrità del PHP nell’archivio. Per attivare questa modifica su Netsons occorre pubblicare la build aggiornata; la modifica nel progetto non equivale a un aggiornamento automatico del server esterno.
+
+## Accesso aggiornato e pubblicazione Vercel
+
+Il login ordinario è ora email autorizzata + codice monouso Supabase, senza password o registrazione pubblica. La home non autenticata rimanda a /accesso. I profili esistenti sono riusati; l’invio è filtrato sul server per membro attivo e account esistente. Per consegnare realmente i codici occorre configurare SMTP Auth, il template Magic Link con {{ .Token }}, origini consentite e callback. Non è stato eseguito un invio reale.
+
+La strada di pubblicazione scelta è ora Vercel per il frontend, con dominio e DNS mantenuti su Netsons. Il precedente caricamento manuale Netsons è soltanto un’alternativa, non il passaggio richiesto per questa strada. Vercel nega attualmente la lettura progetti per permessi mancanti sul team EmmeLab; non è stato creato un deployment o modificato un DNS.
+
+Vedere **[Accesso e pubblicazione](ACCESSO-E-PUBBLICAZIONE.md)** per il template email, la configurazione server, il bootstrap, i passaggi GitHub → Vercel e il CNAME del solo sottodominio desk.
