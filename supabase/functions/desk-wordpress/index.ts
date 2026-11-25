@@ -28,6 +28,30 @@ Deno.serve(async (req: Request) => {
       console.info('[desk-wordpress] Connessione verificata');
       return reply({ success: true, message: 'Firma verificata. Collegamento al CRM riuscito; nessun contatto creato.' });
     }
+    if (input.action === 'sync_poll') {
+      const now = new Date().toISOString();
+      const { error: heartbeatError } = await db.from('desk_wordpress_connections').update({ plugin_version: input.version === '1.1.0' ? '1.1.0' : 'unknown', last_poll_at: now }).eq('id', connection);
+      if (heartbeatError) throw heartbeatError;
+      const report = input.report;
+      if (report) {
+        if (!uuid.test(report.id || '') || !Number.isSafeInteger(report.before) || !Number.isSafeInteger(report.cursor) || report.before < 0 || report.cursor < report.before || !Number.isInteger(report.queued) || !Number.isInteger(report.skipped) || report.queued < 0 || report.skipped < 0 || report.queued + report.skipped > 25 || typeof report.done !== 'boolean') return reply({ error: 'Avanzamento non valido' }, 400);
+        const { data: job, error: jobError } = await db.from('desk_wordpress_imports').select('*').eq('id', report.id).eq('connection_id', connection).eq('tenant_id', config.tenant_id).in('status', ['pending', 'running']).maybeSingle();
+        if (jobError) throw jobError;
+        if (job && job.cursor === report.before) {
+          const errors: Record<string, string> = { storage: 'Archivio invii Elementor non disponibile o schema non compatibile. Attivare Raccolta invii e verificare Elementor Pro.', mapping: 'Nessun modulo mappato nel plugin WordPress.', queue: 'Coda WordPress non disponibile: verificare database e cifratura.' };
+          const message = report.error ? errors[report.error] || 'Importazione interrotta sul sito WordPress.' : null;
+          const { data: updated, error: updateError } = await db.from('desk_wordpress_imports').update({ cursor: report.cursor, queued: job.queued + report.queued, skipped: job.skipped + report.skipped, status: message ? 'failed' : report.done ? 'completed' : 'running', message, updated_at: now }).eq('id', job.id).eq('cursor', report.before).in('status', ['pending', 'running']).select('id');
+          if (updateError) throw updateError;
+          if (updated?.length && !message) {
+            const { error: cursorError } = await db.from('desk_wordpress_connections').update({ import_cursor: report.cursor }).eq('id', connection).lt('import_cursor', report.cursor);
+            if (cursorError) throw cursorError;
+          }
+        }
+      }
+      const { data: job, error: commandError } = await db.from('desk_wordpress_imports').select('id,mode,cursor').eq('connection_id', connection).eq('tenant_id', config.tenant_id).in('status', ['pending', 'running']).maybeSingle();
+      if (commandError) throw commandError;
+      return reply({ success: true, job });
+    }
     const text = (value: unknown, max: number) => typeof value === 'string' ? value.trim().slice(0, max) : '';
     const name = text(input.name, 150), email = text(input.email, 254), phone = text(input.phone, 40).replace(/[^+\d]/g, '');
     const formName = text(input.form_name, 120), formId = text(input.form_id, 120), page = text(input.page_url, 1000);

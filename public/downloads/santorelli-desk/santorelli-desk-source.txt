@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Santorelli Desk — Elementor
- * Description: Collegamento amministrativo sicuro tra Elementor Pro e Santorelli Desk, con coda persistente e firma dei webhook.
- * Version: 1.0.0
+ * Description: Collegamento amministrativo sicuro tra Elementor Pro e Santorelli Desk, con coda persistente, importazione storico e firma dei webhook.
+ * Version: 1.1.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: EmmeLab
@@ -75,6 +75,8 @@ final class Santorelli_Desk_Connector {
         $s = self::settings(); $form = (string) $record->get_form_settings('form_name'); $mapping = null;
         foreach (($s['forms'] ?? array()) as $candidate) { if ($candidate['form'] === $form) { $mapping = $candidate; break; } }
         if (!$mapping || empty($s['connection'])) { return; }
+        // Gli invii salvati sono letti dal cron con ID stabile, anche per il recupero storico.
+        if (in_array('save-to-database', (array) $record->get_form_settings('submit_actions'), true) && Santorelli_Desk_Import::ready() && get_option('santorelli_desk_live_' . $s['connection'], false) !== false) { return; }
         $fields = $record->get('fields'); $values = array();
         foreach ((array) $fields as $id => $field) { $values[$id] = isset($field['value']) && is_scalar($field['value']) ? (string) $field['value'] : ''; }
         $name = trim(($values[$mapping['name']] ?? '') . ' ' . ($values[$mapping['surname']] ?? ''));
@@ -130,6 +132,101 @@ final class Santorelli_Desk_Connector {
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="santorelli_desk_retry"><?php wp_nonce_field('santorelli_desk_retry'); submit_button('Riprova eventi falliti', 'secondary'); ?></form></div><?php
     }
 }
+final class Santorelli_Desk_Import {
+    static function ready() {
+        global $wpdb;
+        foreach (array('e_submissions' => array('id','form_name','created_at_gmt'), 'e_submissions_values' => array('submission_id','key','value')) as $suffix => $required) {
+            $table = $wpdb->prefix . $suffix;
+            if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))) !== $table) { return false; }
+            $columns = $wpdb->get_col("SHOW COLUMNS FROM `$table`", 0);
+            if (array_diff($required, $columns)) { return false; }
+        }
+        return true;
+    }
+    static function boot() {
+        $s = Santorelli_Desk_Connector::settings();
+        if (empty($s['connection'])) { return; }
+        if (!wp_next_scheduled('santorelli_desk_tick')) { wp_schedule_event(time() + 60, 'santorelli_desk_minute', 'santorelli_desk_tick'); }
+        $option = 'santorelli_desk_live_' . $s['connection'];
+        if (get_option($option, false) === false && self::ready()) {
+            global $wpdb;
+            add_option($option, (int) $wpdb->get_var('SELECT COALESCE(MAX(id),0) FROM ' . $wpdb->prefix . 'e_submissions'), '', false);
+        }
+    }
+    static function event_id($connection, $id) {
+        $hex = hash('sha256', 'elementor:' . $connection . ':' . $id);
+        return substr($hex,0,8) . '-' . substr($hex,8,4) . '-5' . substr($hex,13,3) . '-a' . substr($hex,17,3) . '-' . substr($hex,20,12);
+    }
+    static function batch($cursor) {
+        global $wpdb; $s = Santorelli_Desk_Connector::settings();
+        $result = array('before'=>(int)$cursor, 'cursor'=>(int)$cursor, 'queued'=>0, 'skipped'=>0, 'done'=>false);
+        if (empty($s['forms'])) { $result['error']='mapping'; return $result; }
+        if (!self::ready()) { $result['error']='storage'; return $result; }
+        $table = $wpdb->prefix . 'e_submissions'; $values_table = $wpdb->prefix . 'e_submissions_values';
+        $columns = $wpdb->get_col("SHOW COLUMNS FROM `$table`", 0);
+        $extra = in_array('referer', $columns, true) ? ', referer' : '';
+        if (in_array('status', $columns, true)) { $extra .= ', status'; }
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id,form_name,created_at_gmt$extra FROM `$table` WHERE id>%d ORDER BY id LIMIT 25", $cursor));
+        if ($wpdb->last_error) { $result['error']='storage'; return $result; }
+        foreach ($rows as $row) {
+            $mapping = null;
+            foreach ($s['forms'] as $candidate) { if ($candidate['form'] === $row->form_name) { $mapping=$candidate; break; } }
+            if (!$mapping || in_array($row->status ?? '', array('trash','spam'), true)) { $result['cursor']=(int)$row->id; $result['skipped']++; continue; }
+            $keys = array_values(array_unique(array_filter(array($mapping['name'],$mapping['surname'],$mapping['phone'],$mapping['email'],'utm_source','utm_medium','utm_campaign','utm_content','utm_term','referrer','landing_page'))));
+            $placeholders = implode(',', array_fill(0,count($keys),'%s'));
+            $fields = $wpdb->get_results($wpdb->prepare("SELECT `key`,`value` FROM `$values_table` WHERE submission_id=%d AND `key` IN ($placeholders)", array_merge(array($row->id),$keys)));
+            if ($wpdb->last_error) { $result['error']='storage'; return $result; }
+            $values=array(); foreach ($fields as $field) { $values[$field->key]=$field->value; }
+            $name=substr(sanitize_text_field(trim(($values[$mapping['name']] ?? '') . ' ' . ($values[$mapping['surname']] ?? ''))),0,150);
+            $email=sanitize_email($values[$mapping['email']] ?? '');
+            $phone=substr(preg_replace('/[^+0-9]/','',$values[$mapping['phone']] ?? ''),0,40);
+            $timestamp=strtotime($row->created_at_gmt . ' UTC');
+            if (strlen($name)<2 || (!$phone && !$email) || !$timestamp || $timestamp>time()+300) { $result['cursor']=(int)$row->id; $result['skipped']++; continue; }
+            $page=esc_url_raw($row->referer ?? home_url('/'));
+            if (!$page || wp_parse_url($page,PHP_URL_HOST)!==wp_parse_url(home_url('/'),PHP_URL_HOST) || wp_parse_url($page,PHP_URL_SCHEME)!==wp_parse_url(home_url('/'),PHP_URL_SCHEME)) { $page=home_url('/'); }
+            $utm=array(); foreach (array('utm_source','utm_medium','utm_campaign','utm_content','utm_term') as $key) { if (!empty($values[$key])) { $utm[$key]=substr(sanitize_text_field($values[$key]),0,250); } }
+            $event=self::event_id($s['connection'],$row->id);
+            $payload=array('event_id'=>$event,'name'=>$name,'email'=>$email,'phone'=>$phone,'form_name'=>$row->form_name,'form_id'=>hash('sha256',home_url('/') . ':' . $row->form_name),'page_url'=>$page,'received_at'=>gmdate('c',$timestamp),'utm'=>$utm,'referrer'=>esc_url_raw($values['referrer'] ?? ''),'landing_page'=>esc_url_raw($values['landing_page'] ?? ''));
+            $sealed=Santorelli_Desk_Connector::seal(wp_json_encode($payload));
+            if (!$sealed) { $result['error']='queue'; return $result; }
+            $queue=Santorelli_Desk_Connector::table();
+            $inserted=$wpdb->query($wpdb->prepare("INSERT INTO `$queue` (event_id,payload,available_at,created_at) VALUES (%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE event_id=VALUES(event_id)",$event,$sealed));
+            if ($inserted===false) { $result['error']='queue'; return $result; }
+            $result['queued']++; $result['cursor']=(int)$row->id;
+        }
+        $result['done']=count($rows)<25;
+        return $result;
+    }
+    static function tick() {
+        // add_option è atomico: evita sovrapposizioni tra esecuzioni del cron.
+        $lock='santorelli_desk_import_lock';
+        $expires=(int)get_option($lock,0);
+        if ($expires && $expires<time()) { delete_option($lock); }
+        if (!add_option($lock,time()+600,'',false)) { return; }
+        try {
+            $s=Santorelli_Desk_Connector::settings();
+            if (empty($s['connection'])) { return; }
+            $response=Santorelli_Desk_Connector::send(array('action'=>'sync_poll','version'=>'1.1.0'));
+            if (is_wp_error($response) || wp_remote_retrieve_response_code($response)!==200) { return; }
+            $data=json_decode(wp_remote_retrieve_body($response),true);
+            if (!is_array($data) || empty($data['success'])) { return; }
+            if (!empty($data['job']['id'])) {
+                $job=$data['job'];
+                $report=self::batch((int)$job['cursor']); $report['id']=$job['id'];
+                Santorelli_Desk_Connector::send(array('action'=>'sync_poll','version'=>'1.1.0','report'=>$report));
+            }
+            $option='santorelli_desk_live_' . $s['connection'];
+            $cursor=get_option($option,false);
+            if ($cursor!==false) {
+                $batch=self::batch((int)$cursor);
+                // Ripetere una pagina è sicuro: la coda e il CRM deduplicano lo stesso ID.
+                if (empty($batch['error'])) { update_option($option,$batch['cursor'],false); }
+            }
+        } finally { delete_option($lock); }
+    }
+}
+add_action('init', array('Santorelli_Desk_Import','boot'));
+add_action('santorelli_desk_tick', array('Santorelli_Desk_Import','tick'), 5);
 add_filter('cron_schedules', array('Santorelli_Desk_Connector','schedules'));
 register_activation_hook(__FILE__, array('Santorelli_Desk_Connector','activate'));
 register_deactivation_hook(__FILE__, array('Santorelli_Desk_Connector','deactivate'));
