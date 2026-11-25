@@ -1,0 +1,16 @@
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Non riscrivere le richieste di verifica certificati AutoSSL.
+  RewriteRule ^\.well-known(?:/|$) - [L]
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Le route React sono gestite da src/App.tsx.
+  RewriteRule ^ index.html [L]
+</IfModule>

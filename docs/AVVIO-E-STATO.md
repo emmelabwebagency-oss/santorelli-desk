@@ -94,14 +94,36 @@ Controllo catalogo: RLS attiva su tutte le tabelle applicative, nessun accesso a
 
 Test automatici frontend: struttura ZIP, integrità PHP/istruzioni nel pacchetto, rifiuto di file errore, presenza delle protezioni del plugin, compatibilità lista d’attesa e ora legale Europe/Rome. La build esegue i test prima della compilazione. Questi controlli non eseguono PHP o un’istanza WordPress.
 
-Prove HTTP negative: WordPress privo di firma rifiutato con 401; ricevute email senza segreto restituiscono 503. Nel controllo successivo gli endpoint desk-connectors, desk-meta-webhook e desk-whatsapp-webhook restituiscono ancora 404: il loro collaudo HTTP non è superato e richiede verifica della distribuzione automatica. WordPress rifiuta POST senza firma con 401; desk-email rifiuta chiamate anonime con 401; email-events restituisce 503 senza segreto e desk-admin 503 senza origine HTTPS. I soli segreti presenti sono quelli preconfigurati Supabase: non sono disponibili credenziali esterne per un collaudo positivo. Le funzioni sono gestite dalla piattaforma, non richiedono deployment CLI da parte dell’utente.
+Prove HTTP negative aggiornate: desk-connectors è ora distribuito e rifiuta POST senza credenziale macchina con 401. desk-meta-webhook e desk-whatsapp-webhook sono raggiungibili e restituiscono 503 perché manca la configurazione della firma. I precedenti 404 di questi tre endpoint non sono più attuali. WordPress aveva rifiutato POST senza firma con 401; desk-email continua a rifiutare chiamate anonime con 401 e desk-admin restituisce 503 senza origine HTTPS configurata. Gli endpoint desk-meta-oauth e desk-whatsapp-send restituiscono invece ancora 404 e non hanno un file sorgente nella checkout corrente, sebbene esistano tabelle e procedure preparatorie nel database: queste sole strutture non costituiscono una funzionalità operativa. I soli segreti Edge presenti sono quelli preconfigurati Supabase: non sono disponibili credenziali esterne per un collaudo positivo. Nessun invito o messaggio è stato inviato da questa verifica. Le funzioni sono gestite dalla piattaforma, non richiedono deployment CLI da parte dell’utente.
 
 Prima dell’uso reale: test inviti/reset e ruoli live, consegna email e webhook reali, WordPress staging, comportamento con rete interrotta e recupero, monitoraggio errori, privacy/DPA/regione dati, backup/PITR secondo il piano e prova di ripristino con RPO/RTO definiti. Non è stata certificata la conformità GDPR né attivato/verificato il piano di backup da questa iterazione. Non inviare dati clinici a Meta o servizi AI.
 
 Il frontend richiede HTTPS e fallback SPA verso index.html. Il sito pubblico e gli account esterni non sono stati modificati.
+
+## Prerequisiti confermati e blocchi di attivazione
+
+- Primo account confermato: `info@emmelab.it`. Origine confermata: `https://desk.adrianosantorelli.it`. Non occorre chiederli nuovamente.
+- Il controllo HTTPS dal backend fallisce ancora con `SSL peer certificate or SSH remote key was not OK`. Non è stato disabilitato il controllo del certificato. Verificare certificato, catena e associazione del sottodominio presso l’hosting effettivo prima di inviti/reset.
+- Hosting del frontend confermato dall’utente: Netsons. DNS pubblico: record A `desk.adrianosantorelli.it` verso `46.252.156.14`; nessun CNAME nella risposta; nameserver Netsons. Il certificato deve includere il sottodominio esatto sul relativo hosting cPanel; la presenza del record DNS non certifica il contenuto pubblicato.
+- Zero Super Admin e zero connessioni configurate al controllo; bootstrap non eseguito. Zero template WhatsApp presenti. Non sono stati letti dati paziente.
+- Configurare nei segreti Edge `DESK_APP_ORIGIN=https://desk.adrianosantorelli.it`, `DESK_BOOTSTRAP_EMAIL=info@emmelab.it` e un `DESK_BOOTSTRAP_SECRET` casuale di almeno 32 caratteri. Il segreto non deve essere condiviso in chat. Allowlist Auth per callback/reset, SMTP Auth e inviti restano da verificare.
+- Credenziali dei provider, connessioni autorizzate e destinatario/numero di test autorizzato restano necessari per le prove positive. L’email del primo amministratore non autorizza automaticamente un invio WhatsApp o messaggi a pazienti.
 
 ## Regressioni dei moduli avanzati
 
 `tests/advanced-modules.sql` conserva i test eseguiti con fixture sintetiche e rollback: import Admin-only e ripetizione senza duplicati; report storico incluso/escluso; classificazione senza prima gestione; applicazione reale del preavviso a 90 minuti e disattivazione email richiamo; escalation live con testo configurato; esclusione dello storico; rifiuto dei segnaposti paziente; supporto senza lettura diretta di anagrafiche/richieste anche con ruolo PostgreSQL authenticated effettivo; revoca immediata lato server e audit della consultazione. Le nuove tabelle hanno RLS attiva, nessun accesso anon e nessuna scrittura client diretta. Nessuna fixture di collaudo è rimasta nel database.
 
 I test frontend aggiunti coprono BOM, delimitatori, virgolette, multilinea, zeri iniziali, colonne scartate, ID duplicati, date e fusi, fonti/stati sconosciuti e modello. Non sostituiscono il collaudo di un export Pipelean reale fornito e autorizzato dallo studio.
+
+## Pubblicazione su Netsons
+
+### Intervento richiesto al titolare cPanel
+
+1. Aprire cPanel → Sicurezza → SSL/TLS Status. Selezionare `desk.adrianosantorelli.it` e premere **Run AutoSSL**, come indicato nella guida ufficiale https://www.netsons.com/manage/knowledgebase/572. Verificare che il dominio sia associato al server cPanel corretto.
+2. Controllare che il certificato includa esattamente `desk.adrianosantorelli.it` e che la catena sia valida. Solo dopo l’emissione attivare l’eventuale redirect HTTP → HTTPS. Se AutoSSL fallisce, fornire il solo messaggio di errore, non credenziali o chiavi.
+3. Nel pannello Domini controllare la document root del solo sottodominio Desk. Pubblicare lì la build frontend compilata completa, non i sorgenti React, senza sovrascrivere la root del sito WordPress principale. Non è stata eseguita alcuna pubblicazione FTP/cPanel da questa verifica.
+4. Includere il file nascosto `.htaccess` della build; abilitare la visualizzazione dei file nascosti nel File Manager, se necessario. La configurazione `public/.htaccess` preserva file/cartelle e `/.well-known/` (verifiche AutoSSL) e inoltra le altre route a `index.html`, per accesso diretto a `/accesso`, `/auth/callback` e `/reset-password`. Non è stato eseguito un test Apache live.
+
+### Correzione del download plugin per hosting PHP
+
+Il sorgente scaricato dal browser è ora `public/downloads/santorelli-desk/santorelli-desk-source.txt`, senza alcuna estensione `.php`. Questo evita che un handler PHP del server lo esegua anziché restituire il codice. Lo ZIP generato conserva il nome installabile `santorelli-desk/santorelli-desk.php`: non cambia l’installazione in WordPress. Il test del pacchetto verifica sia il nome dell’asset statico sia l’integrità del PHP nell’archivio. Per attivare questa modifica su Netsons occorre pubblicare la build aggiornata; la modifica nel progetto non equivale a un aggiornamento automatico del server esterno.

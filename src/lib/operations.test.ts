@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { unzipSync, strFromU8 } from 'fflate';
-import { buildPluginZip } from './plugin-package';
+import { buildPluginZip, pluginSourceFilename } from './plugin-package';
 import { matchesWaitingSlot } from './waiting-list';
 
 const preferences = { preferred_days: [1,2,3,4,5], time_from: '09:00:00', time_to: '18:00:00', notice_hours: 24, status: 'IN ATTESA' };
 
 describe('Pacchetto WordPress installabile', () => {
-  const php = readFileSync('public/downloads/santorelli-desk/santorelli-desk.php','utf8');
+  const php = readFileSync(`public/downloads/santorelli-desk/${pluginSourceFilename}`,'utf8');
   const instructions = readFileSync('public/downloads/santorelli-desk/LEGGIMI.txt','utf8');
+  it('distribuisce il sorgente come testo, non come script PHP eseguibile', () => {
+    expect(pluginSourceFilename).toMatch(/^[a-z0-9-]+\.txt$/);
+    expect(php.startsWith('<?php')).toBe(true);
+  });
   it('produce un vero ZIP con cartella radice e file PHP intatto', () => {
     const zip = buildPluginZip(php,instructions);
     expect(Array.from(zip.slice(0,4))).toEqual([80,75,3,4]);

@@ -1,5 +1,7 @@
 import { zipSync, strToU8 } from 'fflate';
 
+export const pluginSourceFilename = 'santorelli-desk-source.txt';
+
 export function buildPluginZip(php: string, instructions: string) {
   if (!php.startsWith('<?php') || !php.includes('Plugin Name: Santorelli Desk') || !instructions.trim()) {
     throw new Error('I file del connettore non sono validi');
